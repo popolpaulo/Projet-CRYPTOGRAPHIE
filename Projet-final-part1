@@ -1,0 +1,596 @@
+import tkinter as tk
+import os
+from tkinter import ttk, filedialog
+from PIL import Image, ImageTk
+from cryptography.fernet import Fernet
+from cryptography.hazmat.primitives import serialization, hashes
+from cryptography.hazmat.primitives.asymmetric import rsa, dh
+from cryptography.hazmat.primitives.asymmetric.padding import OAEP, MGF1, PKCS1v15
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.primitives.asymmetric import padding
+from Crypto.Cipher import DES
+from Crypto.Util.Padding import pad, unpad
+from Crypto.Random import get_random_bytes
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+from cryptography.hazmat.backends import default_backend
+import base64
+import os
+from Crypto.Cipher import DES
+import hashlib
+
+
+
+def chiffre_texte():
+    texte_a_chiffrer = texte_entry.get()
+    algorithme = algorithme_var.get()
+    
+    if algorithme == "RSA":
+        private_key = generer_et_sauvegarder_cle_rsa()
+        public_key = private_key.public_key()
+        texte_chiffre = chiffre_rsa(texte_a_chiffrer, public_key)
+    elif algorithme == "AES":
+        texte_chiffre = chiffre_aes(texte_a_chiffrer)
+    elif algorithme == "DES":
+        texte_chiffre = chiffre_des(texte_a_chiffrer)
+    elif algorithme == "Diffie-Hellman":
+        texte_chiffre = chiffre_diffie_hellman(texte_a_chiffrer)
+    else:
+        resultat_label.config(text="Algorithme de chiffrement non pris en charge.")
+        return
+
+
+    hachage = hacher_texte(texte_chiffre)
+
+    resultat_label.config(text=f"Texte chiffré (Base64) : {texte_chiffre}\nHachage : {hachage}")
+    resultat_label.config(text=f"Texte chiffré (Base64) : {texte_chiffre}")
+    sauvegarder_texte_chiffre(texte_chiffre)
+    sauvegarder_hachage(hachage)
+
+
+def hacher_texte(texte_chiffre):
+    # Calculer le hachage SHA-256 du texte chiffré
+    hasher = hashlib.sha256()
+    hasher.update(texte_chiffre.encode())
+    hachage = hasher.hexdigest()
+    return hachage
+
+def sauvegarder_hachage(hachage):
+    with open("hachage.txt", "w") as hash_file:
+        hash_file.write(hachage)
+
+
+
+
+def chiffre_rsa(texte_a_chiffrer, public_key):
+    texte_a_chiffrer = texte_a_chiffrer.encode()
+    ciphertext = public_key.encrypt(
+        texte_a_chiffrer,
+        OAEP(
+            mgf=MGF1(algorithm=hashes.SHA256()),
+            algorithm=hashes.SHA256(),
+            label=None
+        )
+    )
+    return base64.b64encode(ciphertext).decode()
+
+def chiffre_aes(texte_a_chiffrer):
+    key = Fernet.generate_key()
+    cipher_suite = Fernet(key)
+    texte_chiffre = cipher_suite.encrypt(texte_a_chiffrer.encode())
+    
+    ciphertext_base64 = base64.b64encode(texte_chiffre).decode()
+    
+    with open("aes_key.txt", "wb") as key_file:
+        key_file.write(key)
+
+    return ciphertext_base64
+
+def chiffre_des(texte_a_chiffrer):
+    key = b"mysecret"
+    cipher = DES.new(key, DES.MODE_ECB)
+    texte_padded = pad(texte_a_chiffrer.encode(), DES.block_size)
+    texte_chiffre = cipher.encrypt(texte_padded)
+    
+    ciphertext_base64 = base64.b64encode(texte_chiffre).decode()
+    
+    return ciphertext_base64
+
+def chiffre_diffie_hellman(texte_a_chiffrer):
+    parameters = dh.generate_parameters(generator=2, key_size=2048)
+    private_key = parameters.generate_private_key()
+    public_key = private_key.public_key()
+    shared_key = private_key.exchange(public_key)
+
+    derived_key = HKDF(
+        algorithm=hashes.SHA256(),
+        length=32,
+        salt=None,
+        info=b'handshake data',
+        backend=default_backend()
+    ).derive(shared_key)
+
+    fernet_key = base64.urlsafe_b64encode(derived_key)
+
+    # Sauvegarde de la clé Fernet
+    sauvegarder_cle_fernet(fernet_key)
+
+    cipher_suite = Fernet(fernet_key)
+    texte_chiffre = cipher_suite.encrypt(texte_a_chiffrer.encode())
+
+    ciphertext_base64 = base64.b64encode(texte_chiffre).decode()
+
+    return ciphertext_base64
+
+def sauvegarder_cle_fernet(cle_fernet):
+    with open("fernet_key.txt", "wb") as key_file:
+        key_file.write(cle_fernet)
+
+def sauvegarder_texte_chiffre(texte_chiffre):
+    with open("texte_chiffre.txt", "w") as file:
+        file.write(texte_chiffre)
+
+    # Calculer le hachage SHA-256 du texte chiffré
+    hasher = hashlib.sha256()
+    hasher.update(texte_chiffre.encode())
+    hachage = hasher.hexdigest()
+
+def dechiffre_texte(algorithme):
+    global texte_dechiffre_entry, resultat_dechiffre_label, algorithme_dechiffre_var
+    algorithme = algorithme_dechiffre_var.get()
+    texte_a_dechiffrer = texte_dechiffre_entry.get()
+
+    if algorithme == "RSA":
+        cle_privee_rsa = charger_cle_privee_rsa()
+        texte_dechiffre = dechiffre_rsa(texte_a_dechiffrer, cle_privee_rsa)
+    elif algorithme == "AES":
+        texte_dechiffre = dechiffre_aes(texte_a_dechiffrer)
+    elif algorithme == "DES":
+        texte_dechiffre = dechiffre_des(texte_a_dechiffrer)
+    elif algorithme == "Diffie-Hellman":
+        with open("fernet_key.txt", "rb") as key_file:
+            fernet_key = key_file.read()
+        texte_dechiffre = dechiffre_diffie_hellman(texte_a_dechiffrer,fernet_key)
+    else:
+        texte_dechiffre = "Algorithme de déchiffrement non pris en charge."
+
+    resultat_dechiffre_label.config(text=f"Texte déchiffré : {texte_dechiffre}")
+
+    # Calculer le hachage du texte déchiffré
+    hachage_dechiffre = hacher_texte(texte_dechiffre)
+
+    # Charger le hachage précédemment sauvegardé
+    with open("hachage.txt", "r") as hash_file:
+        hachage_sauvegarde = hash_file.read()
+
+    if hachage_dechiffre == hachage_sauvegarde:
+        resultat_dechiffre_label.config(text=resultat_dechiffre_label.cget("text") + "\nIntégrité vérifiée")
+    else:
+        resultat_dechiffre_label.config(text=resultat_dechiffre_label.cget("text") + "\nIntégrité compromise")
+
+def charger_cle_privee_rsa():
+    with open("C:/Users/Maxime/Desktop/bilel/cle_privee_rsa.pem", "rb") as fichier_cle:
+        private_key = serialization.load_pem_private_key(
+            fichier_cle.read(),
+            password=None,
+        )
+    return private_key
+
+def generer_et_sauvegarder_cle_rsa():
+    private_key = rsa.generate_private_key(
+        public_exponent=65537,
+        key_size=2048,
+    )
+    pem = private_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.TraditionalOpenSSL,
+        encryption_algorithm=serialization.NoEncryption()
+    )
+    with open("C:/Users/Maxime/Desktop/bilel/cle_privee_rsa.pem", "wb") as fichier_cle:
+        fichier_cle.write(pem)
+
+    return private_key
+
+def dechiffre_rsa(texte_chiffre_base64, private_key):
+    texte_chiffre = base64.b64decode(texte_chiffre_base64)
+    texte_dechiffre = private_key.decrypt(
+        texte_chiffre,
+        OAEP(
+            mgf=MGF1(algorithm=hashes.SHA256()),
+            algorithm=hashes.SHA256(),
+            label=None
+        )
+    )
+    return texte_dechiffre.decode()
+
+def dechiffre_aes(texte_chiffre_base64):
+    with open("aes_key.txt", "rb") as key_file:
+        key = key_file.read()
+
+    texte_chiffre = base64.b64decode(texte_chiffre_base64)
+
+    cipher_suite = Fernet(key)
+
+    texte_dechiffre = cipher_suite.decrypt(texte_chiffre)
+
+    return texte_dechiffre.decode()
+
+def dechiffre_des(texte_chiffre_base64):
+    texte_chiffre = base64.b64decode(texte_chiffre_base64)
+
+    key = b"mysecret"
+
+    cipher = DES.new(key, DES.MODE_ECB)
+
+    texte_dechiffre_padded = cipher.decrypt(texte_chiffre)
+    texte_dechiffre = unpad(texte_dechiffre_padded, DES.block_size)
+
+    return texte_dechiffre.decode()
+
+def dechiffre_diffie_hellman(texte_chiffre_base64, cle_fernet):
+    try:
+        texte_chiffre = base64.b64decode(texte_chiffre_base64)
+        cipher_suite = Fernet(cle_fernet)
+        texte_dechiffre = cipher_suite.decrypt(texte_chiffre)
+        return texte_dechiffre.decode()
+    except Exception as e:
+        print(f"Erreur lors du déchiffrement : {e}")
+        return None
+
+def fichier_a_chiffrer():
+    file_path = filedialog.askopenfilename()  # Permet à l'utilisateur de sélectionner un fichier
+    if not file_path:
+        return  # L'utilisateur a annulé la sélection de fichier
+
+    algorithme = algorithme_var.get()
+    
+    if algorithme == "RSA":
+        public_key = charger_cle_publique_rsa()  # Chargez la clé publique RSA
+        chiffre_fichier_rsa(file_path, public_key)  # Appelez la fonction avec la clé publique
+    elif algorithme == "AES":
+        chiffre_fichier_aes(file_path)
+    elif algorithme == "DES":
+        chiffre_fichier_des(file_path)
+    elif algorithme == "Diffie-Hellman":
+        chiffre_fichier_diffie_hellman(file_path)
+    else:
+        resultat_label.config(text="Algorithme de chiffrement non pris en charge.")
+        return
+
+    resultat_label.config(text=f"Fichier chiffré : {file_path}.enc")
+
+def chiffre_fichier_rsa(fichier_a_chiffrer, public_key):
+    print("ok")
+    with open(fichier_a_chiffrer, 'rb') as file:
+        texte_a_chiffrer = file.read()
+    ciphertext = public_key.encrypt(
+        texte_a_chiffrer,
+        OAEP(
+            mgf=MGF1(algorithm=hashes.SHA256()),
+            algorithm=hashes.SHA256(),
+            label=None
+        )
+    )
+    with open(fichier_a_chiffrer + ".enc", 'wb') as encrypted_file:
+        encrypted_file.write(base64.b64encode(ciphertext))
+
+
+def generer_et_sauvegarder_cle_texte_rsa():
+    private_key = rsa.generate_private_key(
+        public_exponent=65537,
+        key_size=2048,
+    )
+    with open("cle_privee_rsa.pem", "wb") as fichier_cle_privee:
+        fichier_cle_privee.write(
+            private_key.private_bytes(
+                encoding=serialization.Encoding.PEM,
+                format=serialization.PrivateFormat.TraditionalOpenSSL,
+                encryption_algorithm=serialization.NoEncryption()
+            )
+        )
+
+    public_key = private_key.public_key()
+    with open("cle_publique_rsa.pem", "wb") as fichier_cle_publique:
+        fichier_cle_publique.write(
+            public_key.public_bytes(
+                encoding=serialization.Encoding.PEM,
+                format=serialization.PublicFormat.SubjectPublicKeyInfo,
+            )
+        )
+
+    return private_key, public_key
+
+
+def charger_cle_publique_rsa():
+    with open("cle_publique_rsa.pem", "rb") as fichier_cle:
+        public_key = serialization.load_pem_public_key(
+            fichier_cle.read()
+        )
+    return public_key
+
+def charger_cle_privee_rsa():
+    with open("C:/Users/Maxime/Desktop/bilel/cle_privee_rsa.pem", "rb") as fichier_cle:
+        private_key = serialization.load_pem_private_key(
+            fichier_cle.read(),
+            password=None,
+        )
+    return private_key
+
+
+def chiffre_fichier_aes(fichier_a_chiffrer):
+    key = Fernet.generate_key()
+    cipher_suite = Fernet(key)
+    with open(fichier_a_chiffrer, 'rb') as file:
+        texte_a_chiffrer = file.read()
+    texte_chiffre = cipher_suite.encrypt(texte_a_chiffrer)
+    with open(fichier_a_chiffrer + ".enc", 'wb') as encrypted_file:
+        encrypted_file.write(texte_chiffre)
+    with open("aes_key.txt", "wb") as key_file:
+        key_file.write(key)
+
+def chiffre_fichier_des(fichier_a_chiffrer):
+    key = b"mysecret"
+    cipher = DES.new(key, DES.MODE_ECB)
+    with open(fichier_a_chiffrer, 'rb') as file:
+        texte_a_chiffrer = file.read()
+    texte_padded = pad(texte_a_chiffrer, DES.block_size)
+    texte_chiffre = cipher.encrypt(texte_padded)
+    with open(fichier_a_chiffrer + ".enc", 'wb') as encrypted_file:
+        encrypted_file.write(texte_chiffre)
+
+def chiffre_fichier_diffie_hellman(fichier_a_chiffrer):
+    with open(fichier_a_chiffrer, 'rb') as file:
+        texte_a_chiffrer = file.read()
+    parameters = dh.generate_parameters(generator=2, key_size=2048)
+    private_key = parameters.generate_private_key()
+    public_key = private_key.public_key()
+    shared_key = private_key.exchange(public_key)
+
+    derived_key = HKDF(
+        algorithm=hashes.SHA256(),
+        length=32,
+        salt=None,
+        info=b'handshake data',
+        backend=default_backend()
+    ).derive(shared_key)
+
+    fernet_key = base64.urlsafe_b64encode(derived_key)
+
+    with open("fernet_key.txt", "wb") as key_file:
+        key_file.write(fernet_key)
+
+    cipher_suite = Fernet(fernet_key)
+    texte_chiffre = cipher_suite.encrypt(texte_a_chiffrer)
+
+    with open(fichier_a_chiffrer + ".enc", 'wb') as encrypted_file:
+        encrypted_file.write(texte_chiffre)
+
+def fichier_a_dechiffrer():
+    file_path = filedialog.askopenfilename()  # Permet à l'utilisateur de sélectionner un fichier
+    if not file_path:
+        return  # L'utilisateur a annulé la sélection de fichier, vous pouvez ajouter un message d'erreur si nécessaire
+
+    algorithme = algorithme_var.get()
+
+    if algorithme == "RSA":
+        private_key = charger_cle_privee_rsa()
+        public_key = charger_cle_publique_rsa()
+        dechiffre_fichier_rsa(file_path, private_key, public_key)
+    elif algorithme == "AES":
+        dechiffre_fichier_aes(file_path)
+    elif algorithme == "DES":
+        dechiffre_fichier_des(file_path)
+    elif algorithme == "Diffie-Hellman":
+        dechiffre_fichier_diffie_hellman(file_path)
+    else:
+        resultat_label.config(text="Algorithme de déchiffrement non pris en charge.")
+        return
+
+    resultat_label.config(text=f"Fichier déchiffré : {file_path[:-4]}")
+
+
+def dechiffre_fichier_rsa(file_path, private_key):
+    try:
+        with open(file_path, 'rb') as file:
+            contenu_chiffre = file.read()
+            contenu_dechiffre = private_key.decrypt(
+                contenu_chiffre,
+                padding.OAEP(
+                    mgf=padding.MGF1(algorithm=hashes.SHA256()),
+                    algorithm=hashes.SHA256(),
+                    label=None
+                )
+            )
+
+        with open(file_path[:-4], 'wb') as file_dec:
+            file_dec.write(contenu_dechiffre)
+
+        return True, f"Fichier déchiffré : {file_path[:-4]}"
+    except Exception as e:
+        return False, f"Erreur lors du déchiffrement : {str(e)}"
+
+def dechiffre_fichier_aes(file_path):
+    with open("aes_key.txt", "rb") as key_file:
+        key = key_file.read()
+
+    with open(file_path, 'rb') as file:
+        texte_chiffre = file.read()
+
+    cipher_suite = Fernet(key)
+    texte_dechiffre = cipher_suite.decrypt(texte_chiffre)
+
+    with open(file_path[:-4], 'wb') as decrypted_file:
+        decrypted_file.write(texte_dechiffre)
+
+def dechiffre_fichier_des(file_path):
+    key = b"mysecret"
+    cipher = DES.new(key, DES.MODE_ECB)
+
+    with open(file_path, 'rb') as file:
+        texte_chiffre = file.read()
+
+    texte_dechiffre_padded = cipher.decrypt(texte_chiffre)
+    texte_dechiffre = unpad(texte_dechiffre_padded, DES.block_size)
+
+    with open(file_path[:-4], 'wb') as decrypted_file:
+        decrypted_file.write(texte_dechiffre)
+
+
+def dechiffre_fichier_diffie_hellman(file_path):
+    file_path = filedialog.askopenfilename()  # Permet à l'utilisateur de sélectionner un fichier
+    if not file_path:
+        return  # L'utilisateur a annulé la sélection de fichier, vous pouvez ajouter un message d'erreur si nécessaire
+
+    with open(file_path, 'rb') as file:
+        texte_chiffre = file.read()
+
+    with open("fernet_key.txt", "rb") as key_file:
+        cle_fernet = key_file.read()
+
+    try:
+        cipher_suite = Fernet(cle_fernet)
+        texte_dechiffre = cipher_suite.decrypt(texte_chiffre)
+
+        with open(file_path[:-4], 'wb') as decrypted_file:
+            decrypted_file.write(texte_dechiffre)
+    except Exception as e:
+        print(f"Erreur lors du déchiffrement : {e}")
+
+
+
+################" Interfaces "######################
+
+
+
+
+def ouvrir_fenetre_dechiffrement():
+    global texte_dechiffre_entry, resultat_dechiffre_label, algorithme_dechiffre_var
+
+
+    fenetre_dechiffrement = tk.Toplevel()
+    fenetre_dechiffrement.title("Déchiffrement de texte")
+    fenetre_dechiffrement.geometry("800x600")
+
+    texte_dechiffre_label = tk.Label(fenetre_dechiffrement, text="Entrez le texte à déchiffrer:")
+    texte_dechiffre_label.pack(padx=20, pady=10)
+    texte_dechiffre_entry = tk.Entry(fenetre_dechiffrement)
+    texte_dechiffre_entry.pack(padx=20, pady=10)
+
+    algorithme_dechiffre_var = tk.StringVar()
+    algorithme_dechiffre_options = ["RSA", "AES", "DES", "Diffie-Hellman"]
+    algorithme_dechiffre_dropdown = ttk.Combobox(fenetre_dechiffrement, textvariable=algorithme_dechiffre_var, values=algorithme_dechiffre_options)
+    algorithme_dechiffre_dropdown.pack(padx=20, pady=10)
+    algorithme_dechiffre_dropdown.set("RSA")
+
+    dechiffre_bouton = tk.Button(fenetre_dechiffrement, text="Déchiffrer un texte", command=lambda: dechiffre_texte(algorithme_dechiffre_var.get()))
+    dechiffre_bouton.pack(padx=20, pady=10)
+
+    # Bouton pour déchiffrer un fichier
+    dechiffre_fichier_bouton = tk.Button(fenetre_dechiffrement, text="Déchiffrer un fichier", command=lambda: fichier_a_dechiffrer())
+    dechiffre_fichier_bouton.pack(padx=20, pady=10)
+
+    
+    # Bouton pour déchiffrer une image
+    dechiffre_image_bouton = tk.Button(fenetre_dechiffrement, text="Déchiffrer une image", command=lambda: fichier_a_dechiffrer())
+    dechiffre_image_bouton.pack(padx=20, pady=10)
+    
+    
+    # Ajouter un bouton pour déchiffrer et vérifier l'intégrité
+    dechiffre_verifie_bouton = tk.Button(fenetre_dechiffrement, text=" Vérifier l'Intégrité", command=lambda: dechiffre_texte(algorithme_dechiffre_var.get()))
+    dechiffre_verifie_bouton.pack(padx=20, pady=10)
+
+    # Bouton pour déchiffrer une video
+    dechiffre_video_bouton = tk.Button(fenetre_dechiffrement, text="Déchiffrer une video", command=lambda: fichier_a_dechiffrer())
+    dechiffre_video_bouton.pack(padx=20, pady=10)
+    
+    # Couleur de fond 
+    fenetre_dechiffrement.configure(bg="gainsboro")
+     
+    resultat_dechiffre_label = tk.Label(fenetre_dechiffrement, text="")
+    resultat_dechiffre_label.pack(padx=20, pady=10)
+
+def load_and_resize_image(image_path, width, height):
+    image = Image.open(image_path)
+    image = image.resize((width, height))
+    photo = ImageTk.PhotoImage(image)
+    return photo
+
+fenetre = tk.Tk()
+fenetre.title("Chiffrement de texte")
+fenetre.geometry("1000x800")
+
+
+# Charger l'image de fond
+image_path = "C:/Users/Maxime/Desktop/bilel/dechiffrement.jpg"  # Remplacez par le chemin de votre image
+background_image = Image.open(image_path)
+
+# Redimensionner l'image à la taille de la fenêtre
+background_image = background_image.resize((1000, 800))
+
+# Convertir l'image en PhotoImage
+background_photo = ImageTk.PhotoImage(background_image)
+
+# Créer une étiquette pour afficher l'image de fond
+background_label = tk.Label(fenetre, image=background_photo)
+background_label.place(relwidth=1, relheight=1)
+
+# Chargement et redimensionnement du logo
+logo_path = "C:/Users/Maxime/Desktop/Esme-sudria-logo.png"
+logo_width = 130
+logo_height = 130
+logo_photo = load_and_resize_image(logo_path, logo_width, logo_height)
+
+# Label avec le logo
+logo_label = tk.Label(fenetre, image=logo_photo)
+logo_label.pack(anchor="ne", padx=10, pady=10)
+
+# Zone de texte pour le texte à chiffrer
+texte_label = tk.Label(fenetre, text="Entrez le texte à chiffrer :")
+texte_label.pack(padx=20, pady=10)
+texte_entry = tk.Entry(fenetre)
+texte_entry.pack(padx=20, pady=10)
+
+# Liste déroulante pour choisir l'algorithme
+algorithme_label = tk.Label(fenetre, text="Choisissez l'algorithme de chiffrement:")
+algorithme_label.pack(padx=20, pady=10)
+algorithme_var = tk.StringVar()
+algorithme_options = ["RSA", "AES", "DES", "Diffie-Hellman"]
+algorithme_dropdown = ttk.Combobox(fenetre, textvariable=algorithme_var, values=algorithme_options)
+algorithme_dropdown.pack(padx=20, pady=10)
+algorithme_dropdown.set("RSA")
+
+# Bouton pour chiffrer
+chiffre_bouton = tk.Button(fenetre, text="Chiffrer un texte", command=chiffre_texte)
+chiffre_bouton.pack(padx=20, pady=10)
+
+# Bouton pour chiffrer un fichier
+chiffre_fichier_bouton = tk.Button(fenetre, text="Chiffrer un fichier", command=fichier_a_chiffrer)
+chiffre_fichier_bouton.pack(padx=20, pady=10)
+
+# Bouton pour chiffrer une image
+chiffre_image_bouton = tk.Button(fenetre, text="Chiffrer une image", command=fichier_a_chiffrer)
+chiffre_image_bouton.pack(padx=20, pady=10)
+
+# Bouton pour chiffrer une image
+chiffre_image_bouton = tk.Button(fenetre, text="Chiffrer une Video", command=fichier_a_chiffrer)
+chiffre_image_bouton.pack(padx=20, pady=10)
+
+
+# Ajouter un bouton pour chiffrer et hacher le texte
+chiffre_hache_bouton = tk.Button(fenetre, text="Hacher", command=chiffre_texte)
+chiffre_hache_bouton.pack(padx=20, pady=10)
+
+
+# Bouton pour ouvrir la fenêtre de déchiffrement
+ouvrir_fenetre_dechiffrement_bouton = tk.Button(fenetre, text="Ouvrir la fenêtre de déchiffrement", command=ouvrir_fenetre_dechiffrement)
+ouvrir_fenetre_dechiffrement_bouton.pack(padx=20, pady=10)
+
+# Résultat du chiffrement
+resultat_label = tk.Label(fenetre, text="")
+resultat_label.pack(padx=20, pady=10)
+
+# Couleur de fond 
+fenetre.configure(bg="steelblue") 
+
+# Boucle principale de l'interface graphique
+fenetre.mainloop()
